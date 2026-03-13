@@ -1,10 +1,42 @@
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { BookOpen, Trophy, Target, TrendingUp, PlayCircle } from 'lucide-react';
 import { motion } from 'motion/react';
+import Swal from 'sweetalert2';
 
 export default function Dashboard() {
-  const { subjects, questions, progress } = useStore();
+  const { subjects, questions, progress, setBoardSize } = useStore();
+  const navigate = useNavigate();
+
+  const handleStartGame = (subjectId: string) => {
+    Swal.fire({
+      title: 'Chọn kích thước bàn cờ',
+      html: `
+        <div style="display:flex;gap:12px;justify-content:center;margin-top:12px;">
+          <button id="size-4" class="swal2-styled" style="background:#3b82f6;border-radius:12px;padding:16px 24px;font-size:18px;font-weight:700;min-width:90px;">4×4</button>
+          <button id="size-5" class="swal2-styled" style="background:#8b5cf6;border-radius:12px;padding:16px 24px;font-size:18px;font-weight:700;min-width:90px;">5×5</button>
+          <button id="size-6" class="swal2-styled" style="background:#ec4899;border-radius:12px;padding:16px 24px;font-size:18px;font-weight:700;min-width:90px;">6×6</button>
+        </div>
+      `,
+      showConfirmButton: false,
+      showCancelButton: true,
+      cancelButtonText: 'Hủy',
+      didOpen: () => {
+        const popup = Swal.getPopup();
+        if (!popup) return;
+
+        const handleClick = (size: 4 | 5 | 6) => {
+          setBoardSize(size);
+          Swal.close();
+          navigate(`/game/${subjectId}`);
+        };
+
+        popup.querySelector('#size-4')?.addEventListener('click', () => handleClick(4));
+        popup.querySelector('#size-5')?.addEventListener('click', () => handleClick(5));
+        popup.querySelector('#size-6')?.addEventListener('click', () => handleClick(6));
+      }
+    });
+  };
 
   return (
     <div className="space-y-8">
@@ -47,13 +79,13 @@ export default function Dashboard() {
                 </div>
                 <h3 className="text-xl font-bold text-slate-800 mb-2">{subject.name}</h3>
 
-                <Link
-                  to={`/game/${subject.id}`}
+                <button
+                  onClick={() => handleStartGame(subject.id)}
                   className="mt-6 w-full flex items-center justify-center gap-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium transition-colors"
                 >
                   <PlayCircle className="w-5 h-5" />
                   Bắt đầu chơi
-                </Link>
+                </button>
               </motion.div>
             );
           })}

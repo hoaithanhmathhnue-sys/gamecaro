@@ -2,14 +2,10 @@ import { useState } from 'react';
 import { useStore, Question, Subject } from '../store/useStore';
 import { Plus, Upload, Trash2, Edit, FileText, Bot, FileUp, Save, X, FolderPlus, Printer } from 'lucide-react';
 import Swal from 'sweetalert2';
-import { callGeminiAI } from '../utils/gemini';
+import { extractTextFromFile, parseQuestionsFromText } from '../utils/fileParser';
 import { motion } from 'motion/react';
 import { exportExamToHTML } from '../utils/exportExam';
-import * as mammoth from 'mammoth';
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Set worker path for pdfjs
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+import MathText from '../components/MathText';
 
 export default function Admin() {
   const { subjects, questions, addSubject, addQuestion, deleteQuestion, updateQuestion } = useStore();
@@ -17,8 +13,11 @@ export default function Admin() {
   const [selectedSubject, setSelectedSubject] = useState(subjects[0]?.id || '');
   const [importText, setImportText] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Partial<Question>>({});
+  const [importCount, setImportCount] = useState(10);
+  const [importDifficulty, setImportDifficulty] = useState('mixed');
 
   // New subject form
   const [newSubjectName, setNewSubjectName] = useState('');
@@ -47,31 +46,58 @@ export default function Admin() {
     if (!file) return;
 
     try {
-      if (file.name.endsWith('.docx')) {
-        const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        setImportText(result.value);
-        Swal.fire('Thành công', 'Đã đọc file DOCX. Vui lòng kiểm tra nội dung và bấm Trích xuất.', 'success');
-      } else if (file.name.endsWith('.pdf')) {
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        let text = '';
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          text += content.items.map((item: { str: string }) => item.str).join(' ') + '\n';
-        }
-        setImportText(text);
-        Swal.fire('Thành công', 'Đã đọc file PDF. Vui lòng kiểm tra nội dung và bấm Trích xuất.', 'success');
-      } else {
-        Swal.fire('Lỗi', 'Chỉ hỗ trợ file .docx và .pdf', 'error');
-      }
-    } catch (error) {
+      const text = await extractTextFromFile(file);
+      setImportText(text);
+      Swal.fire('Thành công', `Đã đọc file ${file.name}. Vui lòng kiểm tra nội dung và bấm Trích xuất.`, 'success');
+    } catch (error: any) {
       console.error(error);
-      Swal.fire('Lỗi', 'Không thể đọc file.', 'error');
+      Swal.fire('Lỗi', error.message || 'Không thể đọc file.', 'error');
     }
 
     // Reset input
+    e.target.value = '';
+  };
+
+  // Trích xuất trực tiếp từ file (upload + AI parse 1 bước)
+  const handleDirectFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const { settings } = useStore.getState();
+    if (!settings.apiKey) {
+      Swal.fire('Lỗi', 'Vui lòng nhập API Key trong phần Cài đặt trước!', 'warning');
+      e.target.value = '';
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const text = await extractTextFromFile(file);
+      if (!text.trim()) throw new Error('File không có nội dung hoặc không đọc được.');
+
+      const parsed = await parseQuestionsFromText(settings.apiKey, text, importCount, importDifficulty);
+      if (parsed.length === 0) throw new Error('Không tìm thấy câu hỏi trắc nghiệm trong file.');
+
+      parsed.forEach((q: any) => {
+        addQuestion({
+          id: `q-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+          subjectId: selectedSubject,
+          content: q.content,
+          type: 'multiple-choice',
+          options: q.options,
+          correctAnswer: q.correctAnswer,
+          explanation: q.explanation || 'Không có giải thích',
+          difficulty: (q.difficulty as 'easy' | 'medium' | 'hard') || 'medium'
+        });
+      });
+
+      Swal.fire('Thành công', `Đã nạp ${parsed.length} câu hỏi từ file "${file.name}"!`, 'success');
+    } catch (error: any) {
+      console.error(error);
+      Swal.fire('Lỗi', error.message || 'Không thể phân tích file.', 'error');
+    }
+
+    setIsUploading(false);
     e.target.value = '';
   };
 
@@ -81,58 +107,43 @@ export default function Admin() {
       return;
     }
 
+    const { settings } = useStore.getState();
+    if (!settings.apiKey) {
+      Swal.fire('Lỗi', 'Vui lòng nhập API Key trong phần Cài đặt trước!', 'warning');
+      return;
+    }
+
     setIsImporting(true);
 
-    const prompt = `
-      Trích xuất các câu hỏi trắc nghiệm từ văn bản sau và trả về định dạng JSON array.
-      Mỗi câu hỏi phải có cấu trúc:
-      {
-        "content": "Nội dung câu hỏi",
-        "options": ["Lựa chọn A", "Lựa chọn B", "Lựa chọn C", "Lựa chọn D"],
-        "correctAnswer": 0, // Index của đáp án đúng (0-3)
-        "explanation": "Giải thích ngắn gọn",
-        "difficulty": "easy" | "medium" | "hard"
-      }
-      Chỉ trả về JSON array, không kèm text nào khác.
-      
-      Văn bản:
-      ${importText}
-    `;
+    try {
+      const parsed = await parseQuestionsFromText(settings.apiKey, importText, importCount, importDifficulty);
 
-    const result = await callGeminiAI(prompt);
-    setIsImporting(false);
-
-    if (result) {
-      try {
-        // Clean markdown code blocks if any
-        const jsonStr = result.replace(/```json/g, '').replace(/```/g, '').trim();
-        const parsedQuestions = JSON.parse(jsonStr);
-
-        if (Array.isArray(parsedQuestions)) {
-          parsedQuestions.forEach((q: { content: string; options: string[]; correctAnswer: number; explanation?: string; difficulty?: string }) => {
-            addQuestion({
-              id: `q-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              subjectId: selectedSubject,
-              content: q.content,
-              type: 'multiple-choice',
-              options: q.options,
-              correctAnswer: q.correctAnswer,
-              explanation: q.explanation || 'Không có giải thích',
-              difficulty: (q.difficulty as 'easy' | 'medium' | 'hard') || 'medium'
-            });
+      if (parsed.length > 0) {
+        parsed.forEach((q: any) => {
+          addQuestion({
+            id: `q-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            subjectId: selectedSubject,
+            content: q.content,
+            type: 'multiple-choice',
+            options: q.options,
+            correctAnswer: q.correctAnswer,
+            explanation: q.explanation || 'Không có giải thích',
+            difficulty: (q.difficulty as 'easy' | 'medium' | 'hard') || 'medium'
           });
+        });
 
-          Swal.fire('Thành công', `Đã thêm ${parsedQuestions.length} câu hỏi!`, 'success');
-          setImportText('');
-          setActiveTab('list');
-        } else {
-          throw new Error('Invalid format');
-        }
-      } catch (error) {
-        console.error(error);
-        Swal.fire('Lỗi', 'Không thể phân tích dữ liệu từ AI. Vui lòng thử lại.', 'error');
+        Swal.fire('Thành công', `Đã thêm ${parsed.length} câu hỏi!`, 'success');
+        setImportText('');
+        setActiveTab('list');
+      } else {
+        Swal.fire('Lỗi', 'Không tìm thấy câu hỏi nào trong văn bản.', 'warning');
       }
+    } catch (error: any) {
+      console.error(error);
+      Swal.fire('Lỗi', error.message || 'Không thể phân tích dữ liệu từ AI. Vui lòng thử lại.', 'error');
     }
+
+    setIsImporting(false);
   };
 
   const handleEdit = (question: Question) => {
@@ -333,7 +344,7 @@ export default function Admin() {
                       <div className="flex justify-between items-start gap-4">
                         <div className="flex-1">
                           <div className="flex items-center gap-2 mb-2">
-                            <h4 className="font-bold text-slate-800">{q.content}</h4>
+                            <MathText className="font-bold text-slate-800">{q.content}</MathText>
                             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${q.difficulty === 'easy' ? 'bg-emerald-100 text-emerald-700' :
                               q.difficulty === 'hard' ? 'bg-rose-100 text-rose-700' :
                                 'bg-amber-100 text-amber-700'
@@ -342,7 +353,7 @@ export default function Admin() {
                           <div className="grid grid-cols-2 gap-2 text-sm">
                             {q.options.map((opt, i) => (
                               <div key={i} className={`px-3 py-1.5 rounded-lg ${i === q.correctAnswer ? 'bg-emerald-100 text-emerald-700 font-medium' : 'bg-slate-100 text-slate-600'}`}>
-                                {String.fromCharCode(65 + i)}. {opt}
+                                <MathText>{`${String.fromCharCode(65 + i)}. ${opt}`}</MathText>
                               </div>
                             ))}
                           </div>
@@ -365,14 +376,49 @@ export default function Admin() {
 
           {activeTab === 'import' && (
             <div className="space-y-6">
-              <div className="bg-blue-50 text-blue-800 p-4 rounded-xl text-sm flex justify-between items-center">
+              <div className="bg-blue-50 text-blue-800 p-4 rounded-xl text-sm">
+                <p className="font-bold mb-1 flex items-center gap-2"><Bot className="w-4 h-4" /> Hướng dẫn trích xuất</p>
+                <p>Dán nội dung văn bản chứa câu hỏi hoặc tải lên file DOCX/PDF. AI sẽ tự động phân tích và trích xuất câu hỏi trắc nghiệm.</p>
+              </div>
+
+              {/* Cài đặt trích xuất */}
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="font-bold mb-1 flex items-center gap-2"><Bot className="w-4 h-4" /> Hướng dẫn trích xuất</p>
-                  <p>Dán nội dung văn bản chứa câu hỏi hoặc tải lên file DOCX/PDF. AI sẽ tự động phân tích.</p>
+                  <label className="block text-sm font-medium text-slate-600 mb-1">Số câu hỏi tối đa</label>
+                  <input
+                    type="number"
+                    value={importCount}
+                    onChange={(e) => setImportCount(Number(e.target.value))}
+                    min={1}
+                    max={50}
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  />
                 </div>
-                <label className="flex items-center gap-2 px-4 py-2 bg-white text-blue-600 border border-blue-200 hover:bg-blue-100 rounded-lg font-medium transition-colors cursor-pointer shrink-0">
-                  <FileUp className="w-4 h-4" />
-                  Tải file lên
+                <div>
+                  <label className="block text-sm font-medium text-slate-600 mb-1">Độ khó</label>
+                  <select
+                    value={importDifficulty}
+                    onChange={(e) => setImportDifficulty(e.target.value)}
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none"
+                  >
+                    <option value="mixed">🎲 Hỗn hợp</option>
+                    <option value="easy">🟢 Dễ</option>
+                    <option value="medium">🟡 Trung bình</option>
+                    <option value="hard">🔴 Khó</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Upload file trực tiếp */}
+              <div className="flex gap-3">
+                <label className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-purple-50 text-purple-700 border-2 border-dashed border-purple-200 hover:bg-purple-100 rounded-xl font-medium transition-colors cursor-pointer">
+                  <FileUp className="w-5 h-5" />
+                  {isUploading ? 'Đang xử lý file...' : 'Tải file lên & Trích xuất ngay'}
+                  <input type="file" accept=".docx,.pdf" onChange={handleDirectFileImport} disabled={isUploading} className="hidden" />
+                </label>
+                <label className="flex items-center gap-2 px-4 py-3 bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 rounded-xl font-medium transition-colors cursor-pointer shrink-0">
+                  <Upload className="w-4 h-4" />
+                  Đọc file vào ô text
                   <input type="file" accept=".docx,.pdf" onChange={handleFileUpload} className="hidden" />
                 </label>
               </div>
@@ -386,7 +432,7 @@ export default function Admin() {
 
               <button
                 onClick={handleImport}
-                disabled={isImporting}
+                disabled={isImporting || !importText.trim()}
                 className="flex items-center justify-center gap-2 w-full py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-xl font-bold transition-colors"
               >
                 {isImporting ? (
@@ -397,7 +443,7 @@ export default function Admin() {
                 ) : (
                   <>
                     <Bot className="w-5 h-5" />
-                    Trích xuất tự động
+                    Trích xuất từ văn bản
                   </>
                 )}
               </button>

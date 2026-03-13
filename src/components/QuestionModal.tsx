@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Question } from '../store/useStore';
 import { X, Clock, CheckCircle2, XCircle } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import MathText from './MathText';
 
 const QUESTION_TIME_LIMIT_SECONDS = 30;
 const TIMEOUT_REVEAL_DELAY_MS = 2000;
@@ -64,8 +64,8 @@ export default function QuestionModal({ question, onAnswer, onClose }: Props) {
         </div>
 
         <div className="p-6 md:p-8 overflow-y-auto flex-1">
-          <div className="mb-8 prose prose-slate max-w-none">
-            <ReactMarkdown>{question.content}</ReactMarkdown>
+          <div className="mb-8">
+            <MathText as="div" className="text-lg font-semibold text-slate-800">{question.content}</MathText>
           </div>
 
           <div className="space-y-3">
@@ -91,7 +91,7 @@ export default function QuestionModal({ question, onAnswer, onClose }: Props) {
                   disabled={isRevealed}
                   className={buttonClass}
                 >
-                  <span>{String.fromCharCode(65 + index)}. {option}</span>
+                  <MathText>{`${String.fromCharCode(65 + index)}. ${option}`}</MathText>
                   {isRevealed && index === question.correctAnswer && <CheckCircle2 className="w-6 h-6 text-emerald-500" />}
                   {isRevealed && index === selectedOption && index !== question.correctAnswer && <XCircle className="w-6 h-6 text-rose-500" />}
                 </button>
@@ -108,7 +108,7 @@ export default function QuestionModal({ question, onAnswer, onClose }: Props) {
               <h4 className="font-bold mb-1 flex items-center gap-2">
                 Giải thích:
               </h4>
-              <p className="text-sm">{question.explanation}</p>
+              <MathText as="p" className="text-sm">{question.explanation}</MathText>
             </motion.div>
           )}
         </div>

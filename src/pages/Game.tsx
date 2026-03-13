@@ -7,13 +7,12 @@ import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Clock, User, Users } from 'lucide-react';
 import QuestionModal from '../components/QuestionModal';
 
-const BOARD_SIZE = 8;
-const WIN_CONDITION = 4;
-
 export default function Game() {
   const { subjectId } = useParams<{ subjectId: string }>();
   const navigate = useNavigate();
-  const { questions, addSession } = useStore();
+  const { questions, addSession, settings } = useStore();
+  const BOARD_SIZE = settings.boardSize;
+  const WIN_CONDITION = BOARD_SIZE;
   
   const [board, setBoard] = useState<(string | null)[]>(Array(BOARD_SIZE * BOARD_SIZE).fill(null));
   const [currentPlayer, setCurrentPlayer] = useState<'X' | 'O'>('X');
@@ -30,6 +29,14 @@ export default function Game() {
       Swal.fire('Lỗi', 'Chủ đề này chưa có câu hỏi nào!', 'error').then(() => navigate('/'));
     }
   }, [subjectQuestions, navigate]);
+
+  // Reset board when boardSize changes
+  useEffect(() => {
+    setBoard(Array(BOARD_SIZE * BOARD_SIZE).fill(null));
+    setWinner(null);
+    setScores({ X: 0, O: 0 });
+    setCurrentPlayer('X');
+  }, [BOARD_SIZE]);
 
   const checkWin = (boardState: (string | null)[], player: string) => {
     const checkDirection = (index: number, dx: number, dy: number) => {
@@ -135,7 +142,7 @@ export default function Game() {
           <ArrowLeft className="w-5 h-5" />
           <span>Quay lại</span>
         </button>
-        <h1 className="text-2xl font-bold text-slate-800">Caro 8x8 Đối Kháng</h1>
+        <h1 className="text-2xl font-bold text-slate-800">Caro {BOARD_SIZE}x{BOARD_SIZE} Đối Kháng</h1>
         <div className="w-24"></div> {/* Spacer */}
       </header>
 
@@ -175,7 +182,7 @@ export default function Game() {
               <li>Chọn 1 ô trống trên bàn cờ</li>
               <li>Trả lời đúng câu hỏi để chiếm ô</li>
               <li>Trả lời sai sẽ mất lượt</li>
-              <li>Đội đầu tiên có 4 ô liên tiếp (ngang, dọc, chéo) sẽ thắng</li>
+              <li>Đội đầu tiên có {WIN_CONDITION} ô liên tiếp (ngang, dọc, chéo) sẽ thắng</li>
             </ul>
           </div>
         </div>
@@ -194,7 +201,8 @@ export default function Game() {
                 onClick={() => handleCellClick(index)}
                 disabled={cell !== null || winner !== null}
                 className={`
-                  w-full h-full rounded-lg md:rounded-xl flex items-center justify-center text-2xl md:text-4xl font-black transition-all
+                  w-full h-full rounded-lg md:rounded-xl flex items-center justify-center font-black transition-all
+                  ${BOARD_SIZE <= 4 ? 'text-3xl md:text-5xl' : BOARD_SIZE <= 5 ? 'text-2xl md:text-4xl' : 'text-xl md:text-3xl'}
                   ${cell === null ? 'bg-white hover:bg-slate-50 cursor-pointer shadow-sm' : ''}
                   ${cell === 'X' ? 'bg-blue-500 text-white shadow-md' : ''}
                   ${cell === 'O' ? 'bg-rose-500 text-white shadow-md' : ''}
